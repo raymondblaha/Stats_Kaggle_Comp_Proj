@@ -1,0 +1,294 @@
+---
+title: "Kaggle_Comp_Stats"
+author: "Raymond Blaha"
+date: "2023-10-01"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggcorrplot)
+library(glmnet)
+library(tidyverse)
+library(caret)
+
+
+train_data <- read.csv("/Users/raymondblahajr/Desktop/Stats_Kaggle/house-prices-advanced-regression-techniques-2/train.csv")
+
+# Take a glimpse at the data
+glimpse(train_data)
+
+# Basic Summary
+summary(train_data)
+
+
+head(train_data)
+```
+
+```{r}
+# Transform SalePrice to its logarithm
+train_data$log_SalePrice <- log(train_data$SalePrice)
+
+# Visualizing the distribution of the log-transformed SalePrice
+hist(train_data$log_SalePrice, breaks=50, main="Histogram of Log-Transformed SalePrice", xlab="Log-SalePrice")
+
+# Find correlations with log_SalePrice
+cor_matrix <- cor(train_data %>% select_if(is.numeric), use="complete.obs")
+highly_correlated <- cor_matrix[,'log_SalePrice'][order(-abs(cor_matrix[,'log_SalePrice']))]
+print(highly_correlated)
+ggcorrplot(cor_matrix, type="upper", hc.order = TRUE, outline.col = "white")
+
+
+# We have some Highly Postive Correlations being "OverallQual', 'GrLivArea', 'GarageCars', 'GarageArea', 'TotalBsmtSF', '1stFlrSF' with 'SalesPrice'. Intial suggestion is that as these features increase so will the 'SalesPrice'.
+
+# There are a few negative correlations as well being 'Enclosed Porch', 'KitcheAbvGr', 'OverallCond' and 'YrSold. Initally suggesting that with an increase in these features we can see a decrease in the price. However, the negative cor, is weak. 
+
+```
+
+```{r}
+# Checking the relationship between Overall Quality and log-transformed SalePrice
+ggplot(train_data, aes(x=OverallQual, y=log_SalePrice)) + geom_point() + geom_smooth(method = "lm") + labs(title="Relationship between Overall Quality and Log-Transformed Sale Price")
+
+cor_value <- cor(train_data$OverallQual, train_data$log_SalePrice)
+print(paste("Correlation between OverallQual and Log-SalePrice: ", cor_value))
+
+
+
+```
+
+```{r}
+# Subset for basement variables
+basement_vars <- c("TotalBsmtSF", "BsmtFinSF1", "BsmtFullBath", "BsmtUnfSF", "BsmtHalfBath", "BsmtFinSF2")
+
+# Correlation matrix for these variables
+cor_matrix_basement <- cor(train_data[, basement_vars], use="complete.obs")
+
+# Find highly correlated pairs
+highly_correlated_basement <- findCorrelation(cor_matrix_basement, cutoff=0.75)
+correlated_basement_vars <- basement_vars[highly_correlated_basement]
+correlated_basement_vars
+
+
+
+```
+
+```{r}
+
+# Linear regression model using basement variables and log-transformed SalePrice
+full_model_basement <- lm(log_SalePrice ~ ., data=train_data[, c(basement_vars, "log_SalePrice")])
+summary(full_model_basement)
+
+cat("AIC for Full Model: ", AIC(full_model_basement), "\n")
+cat("BIC for Full Model: ", BIC(full_model_basement), "\n")
+
+# Next steps:
+
+# 1. Remove BsmtFinSF2, this is causing multicollinarity issures. 
+
+#  2. Model Expansion: Explore other variables
+
+#  Variables that are significant:
+# 1. TotalBsmtSF, 
+# 2. BsmtFinSF1, 
+# 3. BsmtUnfSF
+
+#  Variables that need to be removed:
+# 1. BasmtFullBath,
+# 2. BsmtHalfBath
+
+```
+
+```{r}
+# Update basement variables (removing BsmtFinSF2 and non-significant predictors)
+basement_vars_updated <- c("TotalBsmtSF", "BsmtFinSF1", "BsmtUnfSF")
+
+# Garage Variables
+garage_vars <- c("GarageType", "GarageYrBlt", "GarageFinish", "GarageCars", "GarageArea")
+
+
+
+```
+
+```{r}
+# Given GarageType and GarageFinish are categorical, you may need to convert them to factors before running the model
+train_data$GarageType <- as.factor(train_data$GarageType)
+train_data$GarageFinish <- as.factor(train_data$GarageFinish)
+
+garage_model <- lm(log_SalePrice ~ ., data=train_data[, c(garage_vars, "log_SalePrice")])
+summary(garage_model)
+
+
+cat("AIC for Expanded Model: ", AIC(garage_model), "\n")
+cat("BIC for Expanded Model: ", BIC(garage_model), "\n")
+
+```
+
+```{r}
+# Remove non-significant garage variables
+garage_vars_updated <- setdiff(garage_vars, c("GarageYrBlt", "GarageTypeCarPort"))
+
+# Rerun the model with the updated garage variables
+garage_model_updated <- lm(log_SalePrice ~ ., data=train_data[, c(garage_vars_updated, "log_SalePrice")])
+summary(garage_model_updated)
+
+cat("AIC for Refined Garage Model: ", AIC(garage_model_updated), "\n")
+cat("BIC for Refined Garage Model: ", BIC(garage_model_updated), "\n")
+
+
+```
+
+```{r}
+
+living_area_vars <- c("X1stFlrSF", "X2ndFlrSF", "LowQualFinSF", "GrLivArea", 
+                      "FullBath", "HalfBath", "BedroomAbvGr", "KitchenAbvGr", "TotRmsAbvGrd")
+
+
+all(living_area_vars %in% colnames(train_data))
+
+missing_vars <- living_area_vars[!living_area_vars %in% colnames(train_data)]
+print(missing_vars)
+
+
+
+living_area_model <- lm(log_SalePrice ~ ., data=train_data[, c(living_area_vars, "log_SalePrice")])
+summary(living_area_model)
+
+
+
+cat("AIC for Expanded Model: ", AIC(living_area_model), "\n")
+cat("BIC for Expanded Model: ", BIC(living_area_model), "\n")
+
+```
+
+```{r}
+
+# Model Diagnostics for the living_area_model
+
+# Setting up a 2x2 plot grid
+par(mfrow=c(2,2))
+
+# 1. Residuals vs Fitted values
+plot(living_area_model, which=1)
+
+# 2. Normality: QQ plot of the residuals
+plot(living_area_model, which=2)
+
+# 3. Homoscedasticity: Scale-Location plot (sqrt of standardized residuals vs fitted values)
+plot(living_area_model, which=3)
+
+# 4. Leverage vs. studentized residuals to identify influential points
+plot(living_area_model, which=5)
+
+# Check for aliased variables
+alias(living_area_model)
+
+# Remove 'GrLivArea' from the list of predictors
+living_area_vars_updated <- setdiff(living_area_vars, "GrLivArea")
+
+# Rerun the model without 'GrLivArea'
+living_area_model_updated <- lm(log_SalePrice ~ ., data=train_data[, c(living_area_vars_updated, "log_SalePrice")])
+
+# Now compute the VIF values for the updated model
+vif_values_updated <- car::vif(living_area_model_updated)
+print(data.frame(Variable = names(vif_values_updated), VIF = vif_values_updated))
+
+
+```
+
+```{r}
+# Remove TotRmsAbvGrd from the living area variables
+living_area_vars_updated <- setdiff(living_area_vars, "TotRmsAbvGrd")
+
+# Rerun the model with the updated variables
+living_area_model_updated2 <- lm(log_SalePrice ~ ., data=train_data[, c(living_area_vars_updated, "log_SalePrice")])
+summary(living_area_model_updated2)
+
+
+```
+
+```{r}
+
+# Remove GrLivArea from the living area variables
+living_area_vars_updated2 <- setdiff(living_area_vars_updated, "GrLivArea")
+
+# Rerun the model with the updated variables
+living_area_model_updated2 <- lm(log_SalePrice ~ ., data=train_data[, c(living_area_vars_updated2, "log_SalePrice")])
+summary(living_area_model_updated2)
+
+# Check VIF again to ensure multicollinearity has been addressed
+vif_values_updated2 <- car::vif(living_area_model_updated2)
+print(data.frame(Variable = names(vif_values_updated2), VIF = vif_values_updated2))
+
+
+```
+
+```{r}
+kitchen_vars <- c("KitchenAbvGr", "KitchenQual")
+train_data$KitchenQual <- as.factor(train_data$KitchenQual)  # ensure it's a factor
+kitchen_model <- lm(log_SalePrice ~ ., data=train_data[, c(kitchen_vars, "log_SalePrice")])
+summary(kitchen_model)
+
+```
+
+```{r}
+kitchen_vars_updated <- c("KitchenQual")
+kitchen_model_updated <- lm(log_SalePrice ~ ., data=train_data[, c(kitchen_vars_updated, "log_SalePrice")])
+summary(kitchen_model_updated)
+
+
+```
+
+```{r}
+bathroom_vars <- c("FullBath", "HalfBath", "BsmtFullBath", "BsmtHalfBath")
+bathroom_model <- lm(log_SalePrice ~ ., data=train_data[, c(bathroom_vars, "log_SalePrice")])
+summary(bathroom_model)
+
+
+```
+
+```{r}
+outdoor_vars <- c("WoodDeckSF", "OpenPorchSF", "EnclosedPorch", "X3SsnPorch", "ScreenPorch", "PoolArea", "Fence")
+train_data$Fence <- as.factor(train_data$Fence)  # ensure it's a factor
+outdoor_model <- lm(log_SalePrice ~ ., data=train_data[, c(outdoor_vars, "log_SalePrice")])
+summary(outdoor_model)
+
+
+```
+
+```{r}
+outdoor_vars_updated <- c("WoodDeckSF", "ScreenPorch", "PoolArea", "Fence")
+outdoor_model_updated <- lm(log_SalePrice ~ ., data=train_data[, c(outdoor_vars_updated, "log_SalePrice")])
+summary(outdoor_model_updated)
+
+```
+
+```{r}
+misc_vars <- c("MiscFeature", "MiscVal")
+train_data$MiscFeature <- as.factor(train_data$MiscFeature)  # ensure it's a factor
+misc_model <- lm(log_SalePrice ~ ., data=train_data[, c(misc_vars, "log_SalePrice")])
+summary(misc_model)
+
+```
+
+```{r}
+# Remaning Variables:
+
+# MSSubClass: Type of dwelling involved in the sale.
+# MSZoning: General zoning classification of the sale.
+# Neighborhood: Physical locations within Ames city limits.
+# Condition1 & Condition2: Proximity to main road or railroad.
+# HouseStyle: Style of dwelling.
+# RoofStyle & RoofMatl: Roof type and material.
+# Exterior1st & Exterior2nd: Exterior covering on the house.
+# Heating: Type of heating.
+# CentralAir: Central air conditioning.
+# FireplaceQu: Fireplace quality.
+# Functional: Home functionality.
+# SaleType & SaleCondition: Type and condition of sale.
+
+```
